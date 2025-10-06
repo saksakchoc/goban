@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Web囲碁盤（SGF対応・取り/パス/コウ/自殺手×）</title>
+<style>
+  :root { --board-size: min(95vw, 900px); --grid-color: #333; --board-bg: #c89d3d; }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans JP"; margin:0; padding:16px; background:#f7f7f7; }
+  h1 { font-size:1.1rem; margin:0 0 8px; }
+  .app { display:grid; gap:12px; max-width: 980px; margin:0 auto; }
+  .board-wrap { display:grid; gap:8px; align-items:start; }
+  canvas { width: var(--board-size); height: var(--board-size); background: var(--board-bg); border-radius:12px; box-shadow: 0 4px 20px rgba(0,0,0,.12) inset, 0 2px 10px rgba(0,0,0,.08); touch-action: manipulation; }
+  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button, input[type="number"], textarea { font:inherit; }
+  button { padding:8px 12px; border-radius:10px; border:1px solid #bbb; background:#fff; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .status { font-variant-numeric: tabular-nums; margin-left:auto; }
+  .panel { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:12px; }
+  .grid { display:grid; gap:8px; }
+  .small { font-size:.9rem; color:#555; }
+  textarea { width:100%; min-height:140px; border:1px solid #d1d5db; border-radius:10px; padding:8px; }
+  .range { width:240px; }
+  .pill { padding:4px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; }
+  .error { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; padding:8px 10px; border-radius:8px; display:none; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <h1>Web囲碁盤（SGF対応・取り/パス/コウ/自殺手×・座標）</h1>
+    <div class="board-wrap">
+      <canvas id="board" width="1100" height="1100" aria-label="Go Board" role="img"></canvas>
+      <div class="controls">
+        <button id="btn-back" title="一手戻る">◀</button>
+        <button id="btn-forward" title="一手進む">▶</button>
+        <button id="btn-pass" title="パス">パス</button>
+        <input id="range" class="range" type="range" min="0" max="0" value="0" />
+        <span id="status" class="status">0/0 手　次: <span id="next">●</span></span>
+      </div>
+    </div>
+
+    <div class="panel grid">
+      <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <label for="size">盤の大きさ（SZ）：</label>
+        <input id="size" type="number" min="3" max="25" value="6" />
+        <button id="btn-clear" title="初期化">盤をクリア</button>
+        <span class="pill" id="branchNote" hidden>分岐中：未来手順は破棄済み</span>
+      </div>
+      <div class="grid">
+        <label class="small">SGF 読み込み／書き出し（対応：SZ, ;B[ab]/;W[ab]/[]=パス）</label>
+        <textarea id="sgf"></textarea>
+        <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button id="btn-load">SGF読み込み</button>
+          <button id="btn-export">SGF書き出し</button>
+          <button id="btn-end">最終手へ</button>
+        </div>
+        <div id="err" class="error"></div>
+      </div>
+    </div>
+
+    <p class="small">操作：盤面クリックで交互に着手。取り・自殺手禁止・コウ禁止（直前反復）を実装。<br>合法でない交点には赤い「×」が出ます（占有・自殺・コウ）。<br>◀/▶/スライダーで移動し、途中で打つと先の手順は破棄。パスでコウ解除。</p>
+  </div>
+
+<script>
+'use strict';
+window.addEventListener('DOMContentLoaded', () => {
+  const canvas = document.getElementById('board');
+  const errBox = document.getElementById('err');
+  if (!canvas) { errBox.style.display='block'; errBox.textContent='canvas#board が見つかりません'; return; }
+  const ctx = canvas.getContext('2d'); if(!ctx){ errBox.style.display='block'; errBox.textContent='Canvas 2D が取得できません'; return; }
+
+  const sizeInput = document.getElementById('size');
+  const statusEl = document.getElementById('status');
+  const nextEl = document.getElementById('next');
+  const backBtn = document.getElementById('btn-back');
+  const fwdBtn = document.getElementById('btn-forward');
+  const passBtn = document.getElementById('btn-pass');
+  const clearBtn = document.getElementById('btn-clear');
+  const rangeEl = document.getElementById('range');
+  const branchNote = document.getElementById('branchNote');
+  const sgfArea = document.getElementById('sgf');
+  const loadBtn = document.getElementById('btn-load');
+  const endBtn = document.getElementById('btn-end');
+
+  const STONE = { empty:0, black:1, white:2 };
+  const COLOR_CHAR = { 1:'●', 2:'○' };
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+  let N = 6;
+  let board = [];
+  let moves = [];           // {x,y,color,pass}
+  let cursor = 0;
+  let koPoint = null;       // {x,y} 直前コウ
+
+  const inBoard = (x,y)=> x>=0 && y>=0 && x<N && y<N;
+  const nextColorAt = (k)=> (k%2===0? STONE.black: STONE.white);
+  const toAlpha = (i)=> String.fromCharCode('a'.charCodeAt(0)+i);
+  const fromAlpha = (ch)=> ch.charCodeAt(0)-'a'.charCodeAt(0);
+
+  function makeEmptyBoard(){ board = Array.from({length:N}, ()=>Array(N).fill(STONE.empty)); }
+  function cloneBoard(b){ return b.map(r=>r.slice()); }
+
+  function reset(Nnew){ N=Nnew??N; makeEmptyBoard(); moves=[]; cursor=0; rangeEl.max=0; rangeEl.value=0; branchNote.hidden=true; koPoint=null; render(); updateStatus(); }
+
+  function metrics(){ const W=canvas.width,H=canvas.height; const pad=Math.max(90,Math.round(W*0.10)); const cell=(W-pad*2)/(N-1); return {W,H,pad,cell}; }
+
+  function groupAndLibs(b,x,y){ const color=b[y][x]; const q=[[x,y]]; const seen=new Set([x+','+y]); const stones=[], libs=new Set();
+    while(q.length){ const [cx,cy]=q.pop(); stones.push([cx,cy]); for(const [dx,dy] of dirs){ const nx=cx+dx, ny=cy+dy; if(!inBoard(nx,ny)) continue; if(b[ny][nx]===STONE.empty) libs.add(nx+','+ny); else if(b[ny][nx]===color){ const k=nx+','+ny; if(!seen.has(k)){ seen.add(k); q.push([nx,ny]); } } } }
+    return {stones, libs}; }
+
+  function tryPlay(b, x, y, color){
+    if(!inBoard(x,y) || b[y][x]!==STONE.empty) return {ok:false, reason:'occupied', board:b};
+    if(koPoint && koPoint.x===x && koPoint.y===y) return {ok:false, reason:'ko', board:b};
+    const nb=cloneBoard(b); nb[y][x]=color; const opp=(color===STONE.black?STONE.white:STONE.black); let captured=0;
+    for(const [dx,dy] of dirs){ const nx=x+dx, ny=y+dy; if(!inBoard(nx,ny)) continue; if(nb[ny][nx]===opp){ const {stones,libs}=groupAndLibs(nb,nx,ny); if(libs.size===0){ for(const [sx,sy] of stones){ nb[sy][sx]=STONE.empty; captured++; } } } }
+    const {libs}=groupAndLibs(nb,x,y); if(libs.size===0 && captured===0) return {ok:false, reason:'suicide', board:b};
+    let newKo=null; if(captured===1){ // 簡易コウ
+      const empties=[]; for(const [dx,dy] of dirs){ const nx=x+dx, ny=y+dy; if(inBoard(nx,ny) && nb[ny][nx]===STONE.empty) empties.push({x:nx,y:ny}); }
+      if(empties.length===1) newKo=empties[0];
+    }
+    return {ok:true, board:nb, captured, newKo};
+  }
+
+  function applyUpTo(k){ makeEmptyBoard(); koPoint=null; for(let i=0;i<k;i++){ const m=moves[i]; if(m.pass){ koPoint=null; continue; } const res=tryPlay(board,m.x,m.y,m.color); if(res.ok){ board=res.board; koPoint=res.newKo||null; } }
+    cursor=k; rangeEl.max=moves.length; rangeEl.value=cursor; render(); updateStatus(); }
+
+  function playAt(x,y){ if(!inBoard(x,y)||board[y][x]!==STONE.empty) return; if(cursor<moves.length){ moves=moves.slice(0,cursor); branchNote.hidden=false; }
+    const color=nextColorAt(cursor); const res=tryPlay(board,x,y,color); if(!res.ok) return; board=res.board; koPoint=res.newKo||null; moves.push({x,y,color,pass:false}); cursor++; rangeEl.max=moves.length; rangeEl.value=cursor; render(); updateStatus(); fwdBtn.disabled=cursor>=moves.length; }
+
+  function passMove(){ if(cursor<moves.length){ moves=moves.slice(0,cursor); branchNote.hidden=false; } const color=nextColorAt(cursor); koPoint=null; moves.push({x:-1,y:-1,color,pass:true}); applyUpTo(cursor+1); }
+
+  function updateStatus(){ const next=nextColorAt(cursor); const t=`${cursor}/${moves.length} 手　次: `; if(statusEl.firstChild && statusEl.firstChild.nodeType===Node.TEXT_NODE){ statusEl.firstChild.nodeValue=t; } else { statusEl.insertBefore(document.createTextNode(t), statusEl.firstChild); } nextEl.textContent=COLOR_CHAR[next]; backBtn.disabled=(cursor===0); fwdBtn.disabled=(cursor>=moves.length); }
+
+  function render(){ const {W,H,pad,cell}=metrics(); ctx.clearRect(0,0,W,H); ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--board-bg'); ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--grid-color'); ctx.lineWidth=2; for(let i=0;i<N;i++){ const x=pad+i*cell, y=pad+i*cell; ctx.beginPath(); ctx.moveTo(x,pad); ctx.lineTo(x,H-pad); ctx.stroke(); ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke(); }
+    const star=(n)=>{ const p=(n===19)?[3,9,15]:(n===13)?[3,6,9]:(n===9)?[2,4,6]:null; if(!p) return; ctx.fillStyle='#222'; p.forEach(i=>p.forEach(j=>{ const x=pad+i*cell, y=pad+j*cell; ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill(); })); }; star(N);
+    for(let y=0;y<N;y++){ for(let x=0;x<N;x++){ const s=board[y][x]; if(s===STONE.empty) continue; const cx=pad+x*cell, cy=pad+y*cell, r=Math.min(cell*0.45,pad-20); const g=ctx.createRadialGradient(cx-r*0.4,cy-r*0.4,r*0.2,cx,cy,r); if(s===STONE.black){ g.addColorStop(0,'#666'); g.addColorStop(1,'#000'); } else { g.addColorStop(0,'#fff'); g.addColorStop(1,'#ddd'); } ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.lineWidth=1.5; ctx.stroke(); } }
+    // 座標
+    const kmap=['','一','二','三','四','五','六','七','八','九']; const kanji=(n)=>{ if(n<=10) return kmap[n]; if(n<20) return '十'+(n%10?kmap[n%10]:''); if(n===20) return '二十'; if(n<30) return '二十'+(n%10?kmap[n%10]:''); return String(n); };
+    const labelSize=Math.max(16,Math.min(24,Math.floor(cell*0.36))); const labelPad=10; const maxOff=pad-(labelPad+labelSize); const calcOff=Math.floor(cell*0.60); const off=Math.max(20,Math.min(calcOff,maxOff));
+    ctx.fillStyle='#222'; ctx.font=`bold ${labelSize}px system-ui, sans-serif`; ctx.textAlign='center'; ctx.textBaseline='top'; const yLabel=Math.min(H-labelPad-labelSize, H-pad+off); for(let i=0;i<N;i++){ const x=pad+i*cell; ctx.fillText(String(i+1), x, yLabel); }
+    ctx.textAlign='left'; ctx.textBaseline='middle'; const xLabel=Math.max(labelPad, pad-off); for(let j=0;j<N;j++){ const y=pad+j*cell; ctx.fillText(kanji(j+1), xLabel, y); }
+    // 非合法点 ×
+    const marks=computeIllegalPoints(); ctx.strokeStyle='#b91c1c'; ctx.lineWidth=Math.max(2,Math.floor(cell*0.12)); for(const {x,y} of marks){ const cx=pad+x*cell, cy=pad+y*cell, r=cell*0.25; ctx.beginPath(); ctx.moveTo(cx-r,cy-r); ctx.lineTo(cx+r,cy+r); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx+r,cy-r); ctx.lineTo(cx-r,cy+r); ctx.stroke(); }
+  }
+
+  function computeIllegalPoints(){ const pts=[]; const color=nextColorAt(cursor); for(let y=0;y<N;y++) for(let x=0;x<N;x++){ if(board[y][x]!==STONE.empty) continue; const res=tryPlay(board,x,y,color); if(!res.ok) pts.push({x,y}); } return pts; }
+
+  // EVENTS
+  canvas.addEventListener('click', (ev)=>{ const r=canvas.getBoundingClientRect(); const xpx=(ev.clientX-r.left)*(canvas.width/r.width); const ypx=(ev.clientY-r.top)*(canvas.height/r.height); const {pad,cell}=metrics(); const xi=Math.round((xpx-pad)/cell); const yi=Math.round((ypx-pad)/cell); playAt(xi,yi); });
+  backBtn.addEventListener('click', ()=>{ if(cursor>0) applyUpTo(cursor-1); });
+  fwdBtn.addEventListener('click', ()=>{ if(cursor<moves.length) applyUpTo(cursor+1); });
+  passBtn.addEventListener('click', ()=>{ passMove(); });
+  rangeEl.addEventListener('input', ()=>{ applyUpTo(parseInt(rangeEl.value,10)); });
+  clearBtn.addEventListener('click', ()=>{ reset(parseInt(sizeInput.value,10)||N); });
+  sizeInput.addEventListener('change', ()=>{ reset(parseInt(sizeInput.value,10)||N); });
+  loadBtn.addEventListener('click', ()=>{ loadSGF(sgfArea.value); });
+  document.getElementById('btn-export').addEventListener('click', ()=>{ sgfArea.value=exportSGF(); });
+  endBtn.addEventListener('click', ()=>{ applyUpTo(moves.length); });
+
+  // SGF
+  function parseSGF(text){ const szMatch=text.match(/SZ\[(\d+)\]/i); const sz=szMatch? Math.max(3,Math.min(25,parseInt(szMatch[1],10))):N; const mvRe=/;\s*([BW])\s*\[([^\]]*)\]/g; const out=[]; let m; while((m=mvRe.exec(text))!==null){ const col=m[1]==='B'?STONE.black:STONE.white; const xy=m[2]||''; if(xy.length===2){ const x=fromAlpha(xy[0]), y=fromAlpha(xy[1]); if(x>=0&&y>=0&&x<sz&&y<sz) out.push({x,y,color:col,pass:false}); } else { out.push({x:-1,y:-1,color:col,pass:true}); } } return {size:sz,moves:out}; }
+  function loadSGF(text){ const {size, moves:list}=parseSGF(text); reset(size); sizeInput.value=String(size); moves=list; branchNote.hidden=true; applyUpTo(list.length); }
+  function exportSGF(){ const sz=N; let out=['(;GM[1]FF[4]SZ['+sz+']']; const upto=cursor; for(let i=0;i<upto;i++){ const m=moves[i]; const col=(m.color===STONE.black)?'B':'W'; if(m.pass) out.push(';'+col+'[]'); else out.push(';'+col+'['+(toAlpha(m.x)+toAlpha(m.y))+']'); } out.push(')'); return out.join(''); }
+
+  // 初期化
+  reset(6); loadSGF(sgfArea.value);
+
+  // ===== テスト（Console） =====
+  (function runTests(){ function A(name,cond){ console.assert(cond, name); if(!cond) console.error('❌',name); else console.log('✅',name);} 
+    // 既存
+    const p=parseSGF('(;SZ[6];B[aa];W[];B[bb])'); A('SZ=6 読み', p.size===6); A('パス解釈', p.moves.length===3 && p.moves[1].pass===true);
+    const s='(;SZ[6];B[aa];W[bb];B[cc];W[])'; loadSGF(s); const ex=exportSGF(); const again=parseSGF(ex); A('往復で手数一致', again.moves.length===4); applyUpTo(3); const ex2=exportSGF(); const again2=parseSGF(ex2); A('途中局面の書き出し', again2.moves.length===3);
+    // 追加
+    A('canvas取得', !!document.getElementById('board')); A('2Dctx', !!ctx); A('DOMContentLoaded済', document.readyState!=='loading');
+    const outside=parseSGF('(;SZ[6];B[zz])'); A('盤外手は無視', outside.moves.length===0);
+    // 取りのテスト：黒a1, 白b1, 白a2, 黒b2 で白が取られるケース（6路基準座標換算）
+    reset(6); const seq=[[0,0,STONE.black],[1,0,STONE.white],[0,1,STONE.white],[1,1,STONE.black]]; for(const [x,y,c] of seq){ const r=tryPlay(board,x,y,c); A('合法手', r.ok===true); board=r.board; }
+    A('白取り発生', board[0][1]!==STONE.white && board[1][0]!==STONE.white);
+    // 自殺手の非合法
+    reset(6); let r1=tryPlay(board,0,0,STONE.black); board=r1.board; let r2=tryPlay(board,1,0,STONE.white); board=r2.board; let r3=tryPlay(board,0,1,STONE.white); A('白自殺は不可', tryPlay(board,0,0,STONE.white).ok===false);
+  })();
+});
+</script>
+</body>
+</html>
