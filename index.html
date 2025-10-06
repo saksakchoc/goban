@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Web囲碁盤（SGF対応・取り/パス/コウ/自殺手×）</title>
+<title>Web囲碁盤</title>
 <style>
   :root { --board-size: min(95vw, 900px); --grid-color: #333; --board-bg: #c89d3d; }
   body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans JP"; margin:0; padding:16px; background:#f7f7f7; }
@@ -31,7 +31,7 @@
 </head>
 <body>
   <div class="app">
-    <h1>Web囲碁盤（SGF対応・取り/パス/コウ/自殺手×・座標・URL共有/OGP画像）</h1>
+    <h1>Web囲碁盤</h1>
     <div class="board-wrap">
       <canvas id="board" width="1100" height="1100" aria-label="Go Board" role="img"></canvas>
       <div class="controls">
@@ -52,10 +52,7 @@
       </div>
       <div class="grid">
         <label class="small">SGF 読み込み／書き出し（対応：SZ, ;B[ab]/;W[ab]/[]=パス）</label>
-        <textarea id="sgf">(;GM[1]FF[4]PB[You]PW[COSUMI]SZ[6]KM[0]RE[B+5]
-;B[cd];W[dd];B[dc];W[ec];B[de];W[ed];B[cc];W[ee];B[ce];W[db]
-;B[cb];W[eb];B[da];W[ea];B[ca];W[df];B[cf];W[ef];B[fb];W[]
-;B[])</textarea>
+        <textarea id="sgf"></textarea>
         <div class="row">
           <button id="btn-load">SGF読み込み</button>
           <button id="btn-export">SGF書き出し</button>
