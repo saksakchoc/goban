@@ -228,7 +228,26 @@ window.addEventListener('DOMContentLoaded', () => {
   function b64ToUtf8(b64){ return decodeURIComponent(escape(atob(b64))); }
   function exportSGFUpTo(k){ const sz=N; let out=['(;GM[1]FF[4]SZ['+sz+']']; const upto=Math.max(0,Math.min(k,moves.length)); for(let i=0;i<upto;i++){ const m=moves[i]; const col=(m.color===STONE.black)?'B':'W'; if(m.pass) out.push(';'+col+'[]'); else out.push(';'+col+'['+(toAlpha(m.x)+toAlpha(m.y))+']'); } out.push(')'); return out.join(''); }
   function buildShareUrl(){ const k=cursor; const sgf=exportSGFUpTo(k); const s=encodeURIComponent(utf8ToB64(sgf)); const u=new URL(location.href); u.hash = `#sz=${N}&k=${k}&s=${s}`; return u.toString(); }
-  function applyHash(){ const h=location.hash.replace(/^#/, ''); if(!h) return false; const p=new URLSearchParams(h); const sz=coerceSize(p.get('sz')||N, N); const kRaw=p.get('k'); const s=p.get('s'); if(!s) return false; let sgf; try{ sgf=b64ToUtf8(decodeURIComponent(s)); }catch(e){ console.warn('hash decode failed', e); return false; } loadSGF(sgf); applyUpTo(clampStep(kRaw)); return true; }
+  function applyHash(){
+    const h=location.hash.replace(/^#/, '');
+    if(!h) return false;
+    const p=new URLSearchParams(h);
+    const kRaw=p.get('k');
+    const s=p.get('s');
+    if(!s) return false;
+    let sgf;
+    try{
+      sgf=b64ToUtf8(decodeURIComponent(s));
+    }catch(e){
+      console.warn('hash decode failed', e);
+      return false;
+    }
+    // URLの棋譜をそのままテキストエリアに反映し、指定手まで進める
+    loadSGF(sgf);
+    applyUpTo(clampStep(kRaw));
+    if (sgfArea) sgfArea.value = sgf;
+    return true;
+  }
 
   shareBtn.addEventListener('click', async ()=>{
     const url=buildShareUrl(); shareUrlInput.value=url;
@@ -343,9 +362,14 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // 初期化：ハッシュに状態があれば復元、なければ空局面
   if(!applyHash()) reset(6);
+  // BFCache（ブラウザ戻る/進む）復帰時にハッシュ局面を再適用
+  window.addEventListener('pageshow', (e)=>{ if(e.persisted){ applyHash(); }});
 
   // ===== テスト（Console） =====
-  (function runTests(){ const origHash = location.hash; function A(name,cond){ console.assert(cond, name); if(!cond) console.error('❌',name); else console.log('✅',name);} 
+  // 本番では実行しない。?test=1 が付与された時だけ走る。
+  (function maybeRunTests(){
+    const __params = new URLSearchParams(location.search);
+    if(__params.get('test') !== '1') return; const origHash = location.hash; function A(name,cond){ console.assert(cond, name); if(!cond) console.error('❌',name); else console.log('✅',name);} 
     const initN = N; const initMoves = moves.slice(); const initCursor = cursor;
     // 既存
     const p=parseSGF('(;SZ[6];B[aa];W[];B[bb])'); A('SZ=6 読み', p.size===6); A('パス解釈', p.moves.length===3 && p.moves[1].pass===true);
@@ -365,8 +389,10 @@ window.addEventListener('DOMContentLoaded', () => {
     const url2 = new URL(location.href); url2.hash = `#sz=6&k=1&s=${encodeURIComponent(utf8ToB64(before))}`; location.hash = url2.hash; const ok = applyHash(); A('applyHash は true を返す', ok===true); A('k=1 復元で cursor===1', cursor===1);
     // OGP生成は例外なく動く（背景=白）
     let okOGP=true; try{ ogpBtn.click(); }catch(e){ okOGP=false; } A('OGP生成で例外なし', okOGP);
-    // ▼ 追加：recentMoves の長さと形式
+    // ▼ 追加テスト：recentMoves の長さと形式
     const rec = recentMoves(10); A('recentMoves は 0..10 件', rec.length>=0 && rec.length<=10);
+    // ▼ 追加テスト：applyHash が壊れた s を false で返す（例外を出さない）
+    const badHash = '#sz=6&k=0&s=%25%25%25'; location.hash = badHash; const ok2 = applyHash(); A('applyHash(壊れs)はfalse', ok2===false);
     // URLハッシュをテスト前の状態に戻す（リロード時に局面が残らないように）
     try { history.replaceState(null, '', location.pathname + location.search + origHash); } catch(e) { location.hash = origHash || ''; }
     // 復元
