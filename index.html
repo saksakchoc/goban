@@ -52,7 +52,10 @@
       </div>
       <div class="grid">
         <label class="small">SGF 読み込み／書き出し（対応：SZ, ;B[ab]/;W[ab]/[]=パス）</label>
-        <textarea id="sgf"></textarea>
+        <textarea id="sgf">(;GM[1]FF[4]PB[You]PW[COSUMI]SZ[6]KM[0]RE[B+5]
+;B[cd];W[dd];B[dc];W[ec];B[de];W[ed];B[cc];W[ee];B[ce];W[db]
+;B[cb];W[eb];B[da];W[ea];B[ca];W[df];B[cf];W[ef];B[fb];W[]
+;B[])</textarea>
         <div class="row">
           <button id="btn-load">SGF読み込み</button>
           <button id="btn-export">SGF書き出し</button>
@@ -342,36 +345,33 @@ window.addEventListener('DOMContentLoaded', () => {
   if(!applyHash()) reset(6);
 
   // ===== テスト（Console） =====
-//   (function runTests(){ const origHash = location.hash; function A(name,cond){ console.assert(cond, name); if(!cond) console.error('❌',name); else console.log('✅',name);} 
-//     const initN = N; const initMoves = moves.slice(); const initCursor = cursor;
-//     // 既存
-//     const p=parseSGF('(;SZ[6];B[aa];W[];B[bb])'); A('SZ=6 読み', p.size===6); A('パス解釈', p.moves.length===3 && p.moves[1].pass===true);
-//     const s='(;SZ[6];B[aa];W[bb];B[cc];W[])'; loadSGF(s); const ex=exportSGF(); const again=parseSGF(ex); A('往復で手数一致', again.moves.length===4); applyUpTo(3); const ex2=exportSGF(); const again2=parseSGF(ex2); A('途中局面の書き出し', again2.moves.length===3);
-//     // 正規化
-//     A('canvas取得', !!document.getElementById('board')); A('2Dctx', !!ctx); A('DOMContentLoaded済', document.readyState!=='loading');
-//     const outside=parseSGF('(;SZ[6];B[zz])'); A('盤外手は無視', outside.moves.length===0);
-//     const prevN=N; reset(2); A('サイズ<3は3に丸め', N===3 && sizeInput.value==='3'); reset(30); A('サイズ>25は25に丸め', N===25 && sizeInput.value==='25'); reset('abc'); A('不正値(abc)は現行Nを維持', N===25); reset(""); A('空文字は3に丸め', N===3); reset(prevN);
-//     // 取り
-//     reset(5); koPoint=null; let r; r=tryPlay(board,1,1,STONE.white); A('白中央配置', r.ok===true); board=r.board; r=tryPlay(board,0,1,STONE.black); A('黒左', r.ok===true); board=r.board; r=tryPlay(board,2,1,STONE.black); A('黒右', r.ok===true); board=r.board; r=tryPlay(board,1,0,STONE.black); A('黒上', r.ok===true); board=r.board; r=tryPlay(board,1,2,STONE.black); A('黒下=取り', r.ok===true); board=r.board; A('白が取られている', board[1][1]===STONE.empty);
-//     // 自殺
-//     reset(6); let r1=tryPlay(board,0,0,STONE.black); board=r1.board; let r2=tryPlay(board,1,0,STONE.white); board=r2.board; let r3=tryPlay(board,0,1,STONE.white); A('白自殺は不可', tryPlay(board,0,0,STONE.white).ok===false);
-//     // 共有URL roundtrip
-//     reset(6); moves=[]; cursor=0; const demo='(;SZ[6];B[aa];W[bb];B[cc])'; loadSGF(demo); applyUpTo(2); const url=buildShareUrl(); const hash=url.split('#')[1]; A('共有URLに sz/k/s が含まれる', /sz=\d+/.test(hash)&&/k=\d+/.test(hash)&&/s=/.test(hash));
-//     const before=exportSGFUpTo(cursor); const params=new URLSearchParams(hash); const back=decodeURIComponent(params.get('s')); const sgfDecoded=b64ToUtf8(back); A('SGF往復一致(途中手)', before===sgfDecoded);
-//     // ▼ 追加：ハッシュの k=1 を正しく復元（clampStep 使用）
-//     const url2 = new URL(location.href); url2.hash = `#sz=6&k=1&s=${encodeURIComponent(utf8ToB64(before))}`; location.hash = url2.hash; const ok = applyHash(); A('applyHash は true を返す', ok===true); A('k=1 復元で cursor===1', cursor===1);
-//     // OGP生成は例外なく動く（背景=白）
-//     let okOGP=true; try{ ogpBtn.click(); }catch(e){ okOGP=false; } A('OGP生成で例外なし', okOGP);
-//     // ▼ 追加：recentMoves の長さと形式
-//     const rec = recentMoves(10); A('recentMoves は 0..10 件', rec.length>=0 && rec.length<=10);
-//     // URLハッシュをテスト前の状態に戻す（リロード時に局面が残らないように）
-//     try { history.replaceState(null, '', location.pathname + location.search + origHash); } catch(e) { location.hash = origHash || ''; }
-//     // 復元
-//     reset(initN); moves=initMoves.slice(); applyUpTo(initCursor);
-//   })();
-//   // --- ここでUIを確実に初期状態（空局面）に戻す ---
-//   try { history.replaceState(null, '', location.pathname + location.search); } catch(e) { /* noop */ }
-//   setTimeout(() => { moves=[]; cursor=0; koPoint=null; reset(N); }, 0);
+  (function runTests(){ const origHash = location.hash; function A(name,cond){ console.assert(cond, name); if(!cond) console.error('❌',name); else console.log('✅',name);} 
+    const initN = N; const initMoves = moves.slice(); const initCursor = cursor;
+    // 既存
+    const p=parseSGF('(;SZ[6];B[aa];W[];B[bb])'); A('SZ=6 読み', p.size===6); A('パス解釈', p.moves.length===3 && p.moves[1].pass===true);
+    const s='(;SZ[6];B[aa];W[bb];B[cc];W[])'; loadSGF(s); const ex=exportSGF(); const again=parseSGF(ex); A('往復で手数一致', again.moves.length===4); applyUpTo(3); const ex2=exportSGF(); const again2=parseSGF(ex2); A('途中局面の書き出し', again2.moves.length===3);
+    // 正規化
+    A('canvas取得', !!document.getElementById('board')); A('2Dctx', !!ctx); A('DOMContentLoaded済', document.readyState!=='loading');
+    const outside=parseSGF('(;SZ[6];B[zz])'); A('盤外手は無視', outside.moves.length===0);
+    const prevN=N; reset(2); A('サイズ<3は3に丸め', N===3 && sizeInput.value==='3'); reset(30); A('サイズ>25は25に丸め', N===25 && sizeInput.value==='25'); reset('abc'); A('不正値(abc)は現行Nを維持', N===25); reset(""); A('空文字は3に丸め', N===3); reset(prevN);
+    // 取り
+    reset(5); koPoint=null; let r; r=tryPlay(board,1,1,STONE.white); A('白中央配置', r.ok===true); board=r.board; r=tryPlay(board,0,1,STONE.black); A('黒左', r.ok===true); board=r.board; r=tryPlay(board,2,1,STONE.black); A('黒右', r.ok===true); board=r.board; r=tryPlay(board,1,0,STONE.black); A('黒上', r.ok===true); board=r.board; r=tryPlay(board,1,2,STONE.black); A('黒下=取り', r.ok===true); board=r.board; A('白が取られている', board[1][1]===STONE.empty);
+    // 自殺
+    reset(6); let r1=tryPlay(board,0,0,STONE.black); board=r1.board; let r2=tryPlay(board,1,0,STONE.white); board=r2.board; let r3=tryPlay(board,0,1,STONE.white); A('白自殺は不可', tryPlay(board,0,0,STONE.white).ok===false);
+    // 共有URL roundtrip
+    reset(6); moves=[]; cursor=0; const demo='(;SZ[6];B[aa];W[bb];B[cc])'; loadSGF(demo); applyUpTo(2); const url=buildShareUrl(); const hash=url.split('#')[1]; A('共有URLに sz/k/s が含まれる', /sz=\d+/.test(hash)&&/k=\d+/.test(hash)&&/s=/.test(hash));
+    const before=exportSGFUpTo(cursor); const params=new URLSearchParams(hash); const back=decodeURIComponent(params.get('s')); const sgfDecoded=b64ToUtf8(back); A('SGF往復一致(途中手)', before===sgfDecoded);
+    // ▼ 追加：ハッシュの k=1 を正しく復元（clampStep 使用）
+    const url2 = new URL(location.href); url2.hash = `#sz=6&k=1&s=${encodeURIComponent(utf8ToB64(before))}`; location.hash = url2.hash; const ok = applyHash(); A('applyHash は true を返す', ok===true); A('k=1 復元で cursor===1', cursor===1);
+    // OGP生成は例外なく動く（背景=白）
+    let okOGP=true; try{ ogpBtn.click(); }catch(e){ okOGP=false; } A('OGP生成で例外なし', okOGP);
+    // ▼ 追加：recentMoves の長さと形式
+    const rec = recentMoves(10); A('recentMoves は 0..10 件', rec.length>=0 && rec.length<=10);
+    // URLハッシュをテスト前の状態に戻す（リロード時に局面が残らないように）
+    try { history.replaceState(null, '', location.pathname + location.search + origHash); } catch(e) { location.hash = origHash || ''; }
+    // 復元
+    reset(initN); moves=initMoves.slice(); applyUpTo(initCursor);
+  })();
 });
 </script>
 </body>
