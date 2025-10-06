@@ -12,7 +12,7 @@
   .board-wrap { display:grid; gap:8px; align-items:start; }
   canvas { width: var(--board-size); height: var(--board-size); background: var(--board-bg); border-radius:12px; box-shadow: 0 4px 20px rgba(0,0,0,.12) inset, 0 2px 10px rgba(0,0,0,.08); touch-action: manipulation; }
   .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  button, input[type="number"], textarea { font:inherit; }
+  button, input[type="number"], textarea, input[type="text"] { font:inherit; }
   button { padding:8px 12px; border-radius:10px; border:1px solid #bbb; background:#fff; cursor:pointer; }
   button:disabled { opacity:.5; cursor:not-allowed; }
   .status { font-variant-numeric: tabular-nums; margin-left:auto; }
@@ -23,11 +23,15 @@
   .range { width:240px; }
   .pill { padding:4px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; }
   .error { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; padding:8px 10px; border-radius:8px; display:none; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .imgbox { display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap; }
+  .imgbox img { max-width: 420px; border:1px solid #e5e7eb; border-radius:10px; }
 </style>
 </head>
 <body>
   <div class="app">
-    <h1>Web囲碁盤（SGF対応・取り/パス/コウ/自殺手×・座標）</h1>
+    <h1>Web囲碁盤（SGF対応・取り/パス/コウ/自殺手×・座標・URL共有/OGP画像）</h1>
     <div class="board-wrap">
       <canvas id="board" width="1100" height="1100" aria-label="Go Board" role="img"></canvas>
       <div class="controls">
@@ -40,7 +44,7 @@
     </div>
 
     <div class="panel grid">
-      <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <div class="row">
         <label for="size">盤の大きさ（SZ）：</label>
         <input id="size" type="number" min="3" max="25" value="6" />
         <button id="btn-clear" title="初期化">盤をクリア</button>
@@ -49,7 +53,7 @@
       <div class="grid">
         <label class="small">SGF 読み込み／書き出し（対応：SZ, ;B[ab]/;W[ab]/[]=パス）</label>
         <textarea id="sgf"></textarea>
-        <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <div class="row">
           <button id="btn-load">SGF読み込み</button>
           <button id="btn-export">SGF書き出し</button>
           <button id="btn-end">最終手へ</button>
@@ -58,7 +62,23 @@
       </div>
     </div>
 
-    <p class="small">操作：盤面クリックで交互に着手。取り・自殺手禁止・コウ禁止（直前反復）を実装。<br>合法でない交点には赤い「×」が出ます（占有・自殺・コウ）。<br>◀/▶/スライダーで移動し、途中で打つと先の手順は破棄。パスでコウ解除。</p>
+    <div class="panel grid">
+      <div class="row">
+        <button id="btn-share">共有URLを生成/コピー</button>
+        <input id="shareUrl" type="text" class="mono" style="flex:1 1 420px;" placeholder="共有URLがここに入るよ" readonly />
+      </div>
+      <div class="grid">
+        <div class="row">
+          <button id="btn-ogp">OGP画像を作る（1200×630）</button>
+          <a id="dlOgp" download="goboard_ogp.png" style="display:none">画像をダウンロード</a>
+        </div>
+        <div class="imgbox">
+          <img id="ogpPreview" alt="OGP preview" />
+        </div>
+      </div>
+    </div>
+
+    <p class="small">操作：盤面クリックで交互に着手。取り・自殺手禁止・コウ禁止（直前反復）を実装。<br>合法でない交点には赤い「×」が出ます（占有・自殺・コウ）。<br>◀/▶/スライダーで移動し、途中で打つと先の手順は破棄。パスでコウ解除。<br>座標：左（縦＝一,二,三, …）と上（横＝1..N）に表示。<br>共有：URLハッシュに現在局面（SZ・SGF・手数）をエンコード。</p>
   </div>
 
 <script>
@@ -66,8 +86,8 @@
 window.addEventListener('DOMContentLoaded', () => {
   const canvas = document.getElementById('board');
   const errBox = document.getElementById('err');
-  if (!canvas) { errBox.style.display='block'; errBox.textContent='canvas#board が見つかりません'; return; }
-  const ctx = canvas.getContext('2d'); if(!ctx){ errBox.style.display='block'; errBox.textContent='Canvas 2D が取得できません'; return; }
+  if (!canvas) { if(errBox){errBox.style.display='block'; errBox.textContent='canvas#board が見つかりません';} return; }
+  const ctx = canvas.getContext('2d'); if(!ctx){ if(errBox){errBox.style.display='block'; errBox.textContent='Canvas 2D が取得できません';} return; }
 
   const sizeInput = document.getElementById('size');
   const statusEl = document.getElementById('status');
@@ -82,26 +102,69 @@ window.addEventListener('DOMContentLoaded', () => {
   const loadBtn = document.getElementById('btn-load');
   const endBtn = document.getElementById('btn-end');
 
+  const shareBtn = document.getElementById('btn-share');
+  const shareUrlInput = document.getElementById('shareUrl');
+  const ogpBtn = document.getElementById('btn-ogp');
+  const ogpImg = document.getElementById('ogpPreview');
+  const dlOgp = document.getElementById('dlOgp');
+
   const STONE = { empty:0, black:1, white:2 };
   const COLOR_CHAR = { 1:'●', 2:'○' };
   const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
-  let N = 6;
+  let N = 6;                 // 盤サイズ（常に 3..25 の整数に正規化）
   let board = [];
-  let moves = [];           // {x,y,color,pass}
+  let moves = [];            // {x,y,color,pass}
   let cursor = 0;
-  let koPoint = null;       // {x,y} 直前コウ
+  let koPoint = null;        // {x,y} 直前コウ
+
+  // ===== 数値正規化 =====
+  function coerceSize(v, fallback){
+    if (v === null || v === undefined) return fallback;
+    if (typeof v === 'string' && v.trim() === '') return 3;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(3, Math.min(25, Math.floor(n)));
+  }
+  function clampStep(k){
+    const n = Number(k);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(moves.length, Math.floor(n)));
+  }
 
   const inBoard = (x,y)=> x>=0 && y>=0 && x<N && y<N;
   const nextColorAt = (k)=> (k%2===0? STONE.black: STONE.white);
   const toAlpha = (i)=> String.fromCharCode('a'.charCodeAt(0)+i);
   const fromAlpha = (ch)=> ch.charCodeAt(0)-'a'.charCodeAt(0);
 
+  // ===== 漢数字ユーティリティ =====
+  const KANJI_DIGITS = ['', '一','二','三','四','五','六','七','八','九'];
+  function kanjiNum(n){
+    if (n <= 10) return KANJI_DIGITS[n] || String(n);
+    if (n < 20) return '十' + (n % 10 ? KANJI_DIGITS[n % 10] : '');
+    if (n === 20) return '二十';
+    if (n < 30) return '二十' + (n % 10 ? KANJI_DIGITS[n % 10] : '');
+    return String(n);
+  }
+
   function makeEmptyBoard(){ board = Array.from({length:N}, ()=>Array(N).fill(STONE.empty)); }
   function cloneBoard(b){ return b.map(r=>r.slice()); }
 
-  function reset(Nnew){ N=Nnew??N; makeEmptyBoard(); moves=[]; cursor=0; rangeEl.max=0; rangeEl.value=0; branchNote.hidden=true; koPoint=null; render(); updateStatus(); }
+  function reset(Nnew){
+    const nextN = coerceSize(Nnew ?? N, N);
+    N = nextN;
+    if (sizeInput && String(sizeInput.value) !== String(N)) sizeInput.value = String(N);
+    makeEmptyBoard();
+    moves=[]; cursor=0; rangeEl.max=0; rangeEl.value=0; branchNote.hidden=true; koPoint=null;
+    render(); updateStatus();
+  }
 
-  function metrics(){ const W=canvas.width,H=canvas.height; const pad=Math.max(90,Math.round(W*0.10)); const cell=(W-pad*2)/(N-1); return {W,H,pad,cell}; }
+  function metrics(){
+    const W=canvas.width, H=canvas.height;
+    const pad=Math.max(90,Math.round(W*0.10));
+    const denom = Math.max(1, N-1);
+    const cell=(W-pad*2)/denom;
+    return {W,H,pad,cell};
+  }
 
   function groupAndLibs(b,x,y){ const color=b[y][x]; const q=[[x,y]]; const seen=new Set([x+','+y]); const stones=[], libs=new Set();
     while(q.length){ const [cx,cy]=q.pop(); stones.push([cx,cy]); for(const [dx,dy] of dirs){ const nx=cx+dx, ny=cy+dy; if(!inBoard(nx,ny)) continue; if(b[ny][nx]===STONE.empty) libs.add(nx+','+ny); else if(b[ny][nx]===color){ const k=nx+','+ny; if(!seen.has(k)){ seen.add(k); q.push([nx,ny]); } } } }
@@ -113,72 +176,202 @@ window.addEventListener('DOMContentLoaded', () => {
     const nb=cloneBoard(b); nb[y][x]=color; const opp=(color===STONE.black?STONE.white:STONE.black); let captured=0;
     for(const [dx,dy] of dirs){ const nx=x+dx, ny=y+dy; if(!inBoard(nx,ny)) continue; if(nb[ny][nx]===opp){ const {stones,libs}=groupAndLibs(nb,nx,ny); if(libs.size===0){ for(const [sx,sy] of stones){ nb[sy][sx]=STONE.empty; captured++; } } } }
     const {libs}=groupAndLibs(nb,x,y); if(libs.size===0 && captured===0) return {ok:false, reason:'suicide', board:b};
-    let newKo=null; if(captured===1){ // 簡易コウ
-      const empties=[]; for(const [dx,dy] of dirs){ const nx=x+dx, ny=y+dy; if(inBoard(nx,ny) && nb[ny][nx]===STONE.empty) empties.push({x:nx,y:ny}); }
-      if(empties.length===1) newKo=empties[0];
-    }
+    let newKo=null; if(captured===1){ const empties=[]; for(const [dx,dy] of dirs){ const nx=x+dx, ny=y+dy; if(inBoard(nx,ny) && nb[ny][nx]===STONE.empty) empties.push({x:nx,y:ny}); } if(empties.length===1) newKo=empties[0]; }
     return {ok:true, board:nb, captured, newKo};
   }
 
-  function applyUpTo(k){ makeEmptyBoard(); koPoint=null; for(let i=0;i<k;i++){ const m=moves[i]; if(m.pass){ koPoint=null; continue; } const res=tryPlay(board,m.x,m.y,m.color); if(res.ok){ board=res.board; koPoint=res.newKo||null; } }
-    cursor=k; rangeEl.max=moves.length; rangeEl.value=cursor; render(); updateStatus(); }
+  function applyUpTo(k){
+    makeEmptyBoard(); koPoint=null;
+    const upto = clampStep(k);
+    for(let i=0;i<upto;i++){
+      const m=moves[i];
+      if(m.pass){ koPoint=null; continue; }
+      const res=tryPlay(board,m.x,m.y,m.color);
+      if(res.ok){ board=res.board; koPoint=res.newKo||null; }
+    }
+    cursor=upto; rangeEl.max=moves.length; rangeEl.value=String(cursor);
+    render(); updateStatus();
+  }
 
   function playAt(x,y){ if(!inBoard(x,y)||board[y][x]!==STONE.empty) return; if(cursor<moves.length){ moves=moves.slice(0,cursor); branchNote.hidden=false; }
-    const color=nextColorAt(cursor); const res=tryPlay(board,x,y,color); if(!res.ok) return; board=res.board; koPoint=res.newKo||null; moves.push({x,y,color,pass:false}); cursor++; rangeEl.max=moves.length; rangeEl.value=cursor; render(); updateStatus(); fwdBtn.disabled=cursor>=moves.length; }
+    const color=nextColorAt(cursor); const res=tryPlay(board,x,y,color); if(!res.ok) return; board=res.board; koPoint=res.newKo||null; moves.push({x,y,color,pass:false}); cursor++; rangeEl.max=moves.length; rangeEl.value=String(cursor); render(); updateStatus(); fwdBtn.disabled=cursor>=moves.length; }
 
   function passMove(){ if(cursor<moves.length){ moves=moves.slice(0,cursor); branchNote.hidden=false; } const color=nextColorAt(cursor); koPoint=null; moves.push({x:-1,y:-1,color,pass:true}); applyUpTo(cursor+1); }
 
-  function updateStatus(){ const next=nextColorAt(cursor); const t=`${cursor}/${moves.length} 手　次: `; if(statusEl.firstChild && statusEl.firstChild.nodeType===Node.TEXT_NODE){ statusEl.firstChild.nodeValue=t; } else { statusEl.insertBefore(document.createTextNode(t), statusEl.firstChild); } nextEl.textContent=COLOR_CHAR[next]; backBtn.disabled=(cursor===0); fwdBtn.disabled=(cursor>=moves.length); }
+  function updateStatus(){ const next=nextColorAt(cursor); const t=`${cursor}/${moves.length} 手　次: `; if(statusEl.firstChild && statusEl.firstChild.nodeType===Node.TEXT_NODE){ statusEl.firstChild.nodeValue=t; } else { statusEl.insertBefore(document.createTextNode(t), statusEl.firstChild); } nextEl.textContent=COLOR_CHAR[next] || '●'; backBtn.disabled=(cursor===0); fwdBtn.disabled=(cursor>=moves.length); }
 
   function render(){ const {W,H,pad,cell}=metrics(); ctx.clearRect(0,0,W,H); ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--board-bg'); ctx.fillRect(0,0,W,H);
     ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--grid-color'); ctx.lineWidth=2; for(let i=0;i<N;i++){ const x=pad+i*cell, y=pad+i*cell; ctx.beginPath(); ctx.moveTo(x,pad); ctx.lineTo(x,H-pad); ctx.stroke(); ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke(); }
     const star=(n)=>{ const p=(n===19)?[3,9,15]:(n===13)?[3,6,9]:(n===9)?[2,4,6]:null; if(!p) return; ctx.fillStyle='#222'; p.forEach(i=>p.forEach(j=>{ const x=pad+i*cell, y=pad+j*cell; ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill(); })); }; star(N);
     for(let y=0;y<N;y++){ for(let x=0;x<N;x++){ const s=board[y][x]; if(s===STONE.empty) continue; const cx=pad+x*cell, cy=pad+y*cell, r=Math.min(cell*0.45,pad-20); const g=ctx.createRadialGradient(cx-r*0.4,cy-r*0.4,r*0.2,cx,cy,r); if(s===STONE.black){ g.addColorStop(0,'#666'); g.addColorStop(1,'#000'); } else { g.addColorStop(0,'#fff'); g.addColorStop(1,'#ddd'); } ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.lineWidth=1.5; ctx.stroke(); } }
-    // 座標
-    const kmap=['','一','二','三','四','五','六','七','八','九']; const kanji=(n)=>{ if(n<=10) return kmap[n]; if(n<20) return '十'+(n%10?kmap[n%10]:''); if(n===20) return '二十'; if(n<30) return '二十'+(n%10?kmap[n%10]:''); return String(n); };
-    const labelSize=Math.max(16,Math.min(24,Math.floor(cell*0.36))); const labelPad=10; const maxOff=pad-(labelPad+labelSize); const calcOff=Math.floor(cell*0.60); const off=Math.max(20,Math.min(calcOff,maxOff));
-    ctx.fillStyle='#222'; ctx.font=`bold ${labelSize}px system-ui, sans-serif`; ctx.textAlign='center'; ctx.textBaseline='top'; const yLabel=Math.min(H-labelPad-labelSize, H-pad+off); for(let i=0;i<N;i++){ const x=pad+i*cell; ctx.fillText(String(i+1), x, yLabel); }
-    ctx.textAlign='left'; ctx.textBaseline='middle'; const xLabel=Math.max(labelPad, pad-off); for(let j=0;j<N;j++){ const y=pad+j*cell; ctx.fillText(kanji(j+1), xLabel, y); }
+    // 座標（左＋上）
+    const labelSize=Math.max(16,Math.min(24,Math.floor(cell*0.36)));
+    const labelPad=10; const maxOff=pad-(labelPad+labelSize); const calcOff=Math.floor(cell*0.60); const off=Math.max(20,Math.min(calcOff,maxOff));
+    ctx.fillStyle='#222'; ctx.font=`bold ${labelSize}px system-ui, sans-serif`;
+    // 上（横1..N）
+    ctx.textAlign='center'; ctx.textBaseline='bottom'; const yTop=Math.max(labelPad+labelSize*0.2, pad - off);
+    for(let i=0;i<N;i++){ const x=pad+i*cell; ctx.fillText(String(i+1), x, yTop); }
+    // 左（縦 一,二,..）
+    ctx.textAlign='left'; ctx.textBaseline='middle'; const xLabel=Math.max(labelPad, pad - off);
+    for(let j=0;j<N;j++){ const y=pad+j*cell; ctx.fillText(kanjiNum(j+1), xLabel, y); }
     // 非合法点 ×
     const marks=computeIllegalPoints(); ctx.strokeStyle='#b91c1c'; ctx.lineWidth=Math.max(2,Math.floor(cell*0.12)); for(const {x,y} of marks){ const cx=pad+x*cell, cy=pad+y*cell, r=cell*0.25; ctx.beginPath(); ctx.moveTo(cx-r,cy-r); ctx.lineTo(cx+r,cy+r); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx+r,cy-r); ctx.lineTo(cx-r,cy+r); ctx.stroke(); }
   }
 
   function computeIllegalPoints(){ const pts=[]; const color=nextColorAt(cursor); for(let y=0;y<N;y++) for(let x=0;x<N;x++){ if(board[y][x]!==STONE.empty) continue; const res=tryPlay(board,x,y,color); if(!res.ok) pts.push({x,y}); } return pts; }
 
+  // ===== 共有URL（ハッシュ） =====
+  function utf8ToB64(str){ return btoa(unescape(encodeURIComponent(str))); }
+  function b64ToUtf8(b64){ return decodeURIComponent(escape(atob(b64))); }
+  function exportSGFUpTo(k){ const sz=N; let out=['(;GM[1]FF[4]SZ['+sz+']']; const upto=Math.max(0,Math.min(k,moves.length)); for(let i=0;i<upto;i++){ const m=moves[i]; const col=(m.color===STONE.black)?'B':'W'; if(m.pass) out.push(';'+col+'[]'); else out.push(';'+col+'['+(toAlpha(m.x)+toAlpha(m.y))+']'); } out.push(')'); return out.join(''); }
+  function buildShareUrl(){ const k=cursor; const sgf=exportSGFUpTo(k); const s=encodeURIComponent(utf8ToB64(sgf)); const u=new URL(location.href); u.hash = `#sz=${N}&k=${k}&s=${s}`; return u.toString(); }
+  function applyHash(){ const h=location.hash.replace(/^#/, ''); if(!h) return false; const p=new URLSearchParams(h); const sz=coerceSize(p.get('sz')||N, N); const kRaw=p.get('k'); const s=p.get('s'); if(!s) return false; let sgf; try{ sgf=b64ToUtf8(decodeURIComponent(s)); }catch(e){ console.warn('hash decode failed', e); return false; } loadSGF(sgf); applyUpTo(clampStep(kRaw)); return true; }
+
+  shareBtn.addEventListener('click', async ()=>{
+    const url=buildShareUrl(); shareUrlInput.value=url;
+    try{ await navigator.clipboard.writeText(url); shareBtn.textContent='URLをコピーしました'; setTimeout(()=>shareBtn.textContent='共有URLを生成/コピー',1200); }catch{ /* クリップボードNGでもOK */ }
+  });
+  window.addEventListener('hashchange', ()=>{ applyHash(); });
+
+  // ===== OGP画像生成（背景=白、オートスクロールなし） =====
+  // 直近n手を取得（フォーマットもここで管理）
+  function recentMoves(n){
+    const start = Math.max(0, cursor - n);
+    const list = [];
+    for(let i=start; i<cursor; i++){
+      const m = moves[i];
+      const num = i+1;
+      const color = (m.color===STONE.black?'●':'○');
+      let txt;
+      if(m.pass){
+        txt = `${num}. ${color} パス`;
+      } else {
+        // 表示座標: 横は1..N、縦は一,二,...
+        const coord = `${m.x+1}-${kanjiNum(m.y+1)}`;
+        txt = `${num}. ${color} ${coord}`;
+      }
+      list.push(txt);
+    }
+    return list;
+  }
+
+  ogpBtn.addEventListener('click', ()=>{
+    const w=1200, h=630; const off=80; const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h; const tctx=tmp.getContext('2d');
+    // 背景（白）
+    tctx.fillStyle='#ffffff'; tctx.fillRect(0,0,w,h);
+
+    // 左側：盤面（座標付き）
+    const bw = Math.min(520, h-2*off); // 盤面描画サイズ
+    const bx = 40; const by = (h - bw) / 2; // 縦中央寄せ
+    // 盤背景
+    tctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--board-bg')||'#c89d3d';
+    tctx.strokeStyle='rgba(0,0,0,.15)'; tctx.lineWidth=2; tctx.fillRect(bx,by,bw,bw); tctx.strokeRect(bx,by,bw,bw);
+
+    // グリッド
+    const pad=40; const cell=(bw-pad*2)/(Math.max(1,N-1));
+    tctx.strokeStyle='#333';
+    for(let i=0;i<N;i++){
+      const x=bx+pad+i*cell, y=by+pad+i*cell;
+      tctx.beginPath(); tctx.moveTo(x,by+pad); tctx.lineTo(x,by+bw-pad); tctx.stroke();
+      tctx.beginPath(); tctx.moveTo(bx+pad,y); tctx.lineTo(bx+bw-pad,y); tctx.stroke();
+    }
+    // 星
+    const star=(n)=>{ const p=(n===19)?[3,9,15]:(n===13)?[3,6,9]:(n===9)?[2,4,6]:null; if(!p) return; tctx.fillStyle='#222'; p.forEach(i=>p.forEach(j=>{ const x=bx+pad+i*cell, y=by+pad+j*cell; tctx.beginPath(); tctx.arc(x,y,3.2,0,Math.PI*2); tctx.fill(); })); }; star(N);
+
+    // 石
+    for(let y=0;y<N;y++){
+      for(let x=0;x<N;x++){
+        const s=board[y][x]; if(!s) continue;
+        const cx=bx+pad+x*cell, cy=by+pad+y*cell, r=Math.min(cell*0.42, 18);
+        tctx.beginPath(); tctx.arc(cx,cy,r,0,Math.PI*2);
+        tctx.fillStyle=(s===1?'#000':'#fff'); tctx.fill();
+        tctx.lineWidth=2; tctx.strokeStyle='rgba(0,0,0,.5)'; tctx.stroke();
+      }
+    }
+
+    // 座標（上：1..N、左：一..）
+    const labelSize=Math.max(18,Math.min(26,Math.floor(cell*0.42)));
+    tctx.fillStyle='#111'; tctx.font=`bold ${labelSize}px system-ui, sans-serif`;
+    // 上
+    tctx.textAlign='center'; tctx.textBaseline='bottom';
+    const yTop = by + pad - Math.min(24, Math.max(12, Math.floor(cell*0.5)));
+    for(let i=0;i<N;i++){
+      const x=bx+pad+i*cell; tctx.fillText(String(i+1), x, yTop);
+    }
+    // 左
+    tctx.textAlign='left'; tctx.textBaseline='middle';
+    const xLabel = bx + pad - Math.min(32, Math.max(14, Math.floor(cell*0.7)));
+    for(let j=0;j<N;j++){
+      const y=by+pad+j*cell; tctx.fillText(kanjiNum(j+1), xLabel, y);
+    }
+
+    // 右側：直近10手のみ
+    const rightX = bx + bw + 48;
+    let y = by + 10;
+    tctx.fillStyle='#111';
+    tctx.font='bold 36px system-ui, sans-serif';
+    tctx.fillText('直近10手', rightX, y); y += 28;
+    tctx.font='24px system-ui, sans-serif';
+    const list = recentMoves(10);
+    y += 20;
+    const lh = 32;
+    for(const line of list){ tctx.fillText(line, rightX, y); y += lh; }
+
+    const dataUrl = tmp.toDataURL('image/png');
+    ogpImg.src = dataUrl; dlOgp.href=dataUrl; dlOgp.style.display='inline-block';
+  });
+
   // EVENTS
   canvas.addEventListener('click', (ev)=>{ const r=canvas.getBoundingClientRect(); const xpx=(ev.clientX-r.left)*(canvas.width/r.width); const ypx=(ev.clientY-r.top)*(canvas.height/r.height); const {pad,cell}=metrics(); const xi=Math.round((xpx-pad)/cell); const yi=Math.round((ypx-pad)/cell); playAt(xi,yi); });
   backBtn.addEventListener('click', ()=>{ if(cursor>0) applyUpTo(cursor-1); });
   fwdBtn.addEventListener('click', ()=>{ if(cursor<moves.length) applyUpTo(cursor+1); });
   passBtn.addEventListener('click', ()=>{ passMove(); });
-  rangeEl.addEventListener('input', ()=>{ applyUpTo(parseInt(rangeEl.value,10)); });
-  clearBtn.addEventListener('click', ()=>{ reset(parseInt(sizeInput.value,10)||N); });
-  sizeInput.addEventListener('change', ()=>{ reset(parseInt(sizeInput.value,10)||N); });
+  rangeEl.addEventListener('input', ()=>{ applyUpTo(clampStep(rangeEl.value)); });
+  clearBtn.addEventListener('click', ()=>{ reset(coerceSize(sizeInput.value, N)); });
+  sizeInput.addEventListener('change', ()=>{ reset(coerceSize(sizeInput.value, N)); });
   loadBtn.addEventListener('click', ()=>{ loadSGF(sgfArea.value); });
   document.getElementById('btn-export').addEventListener('click', ()=>{ sgfArea.value=exportSGF(); });
   endBtn.addEventListener('click', ()=>{ applyUpTo(moves.length); });
 
   // SGF
-  function parseSGF(text){ const szMatch=text.match(/SZ\[(\d+)\]/i); const sz=szMatch? Math.max(3,Math.min(25,parseInt(szMatch[1],10))):N; const mvRe=/;\s*([BW])\s*\[([^\]]*)\]/g; const out=[]; let m; while((m=mvRe.exec(text))!==null){ const col=m[1]==='B'?STONE.black:STONE.white; const xy=m[2]||''; if(xy.length===2){ const x=fromAlpha(xy[0]), y=fromAlpha(xy[1]); if(x>=0&&y>=0&&x<sz&&y<sz) out.push({x,y,color:col,pass:false}); } else { out.push({x:-1,y:-1,color:col,pass:true}); } } return {size:sz,moves:out}; }
+  function parseSGF(text){ const t=String(text||''); const szMatch=t.match(/SZ\[(\d+)\]/i); const rawSz=szMatch? parseInt(szMatch[1],10): N; const sz=Math.max(3,Math.min(25, rawSz)); const mvRe=/;\s*([BW])\s*\[([^\]]*)\]/g; const out=[]; let m; while((m=mvRe.exec(t))!==null){ const col=m[1]==='B'?STONE.black:STONE.white; const xy=(m[2]||'').trim(); if(xy.length===2){ const x=fromAlpha(xy[0]), y=fromAlpha(xy[1]); if(Number.isFinite(x)&&Number.isFinite(y) && x>=0&&y>=0&&x<sz&&y<sz) out.push({x,y,color:col,pass:false}); } else { out.push({x:-1,y:-1,color:col,pass:true}); } } return {size:sz,moves:out}; }
   function loadSGF(text){ const {size, moves:list}=parseSGF(text); reset(size); sizeInput.value=String(size); moves=list; branchNote.hidden=true; applyUpTo(list.length); }
   function exportSGF(){ const sz=N; let out=['(;GM[1]FF[4]SZ['+sz+']']; const upto=cursor; for(let i=0;i<upto;i++){ const m=moves[i]; const col=(m.color===STONE.black)?'B':'W'; if(m.pass) out.push(';'+col+'[]'); else out.push(';'+col+'['+(toAlpha(m.x)+toAlpha(m.y))+']'); } out.push(')'); return out.join(''); }
 
-  // 初期化
-  reset(6); loadSGF(sgfArea.value);
+  // 初期化：ハッシュに状態があれば復元、なければ空局面
+  if(!applyHash()) reset(6);
 
   // ===== テスト（Console） =====
-  (function runTests(){ function A(name,cond){ console.assert(cond, name); if(!cond) console.error('❌',name); else console.log('✅',name);} 
+  (function runTests(){ const origHash = location.hash; function A(name,cond){ console.assert(cond, name); if(!cond) console.error('❌',name); else console.log('✅',name);} 
+    const initN = N; const initMoves = moves.slice(); const initCursor = cursor;
     // 既存
     const p=parseSGF('(;SZ[6];B[aa];W[];B[bb])'); A('SZ=6 読み', p.size===6); A('パス解釈', p.moves.length===3 && p.moves[1].pass===true);
     const s='(;SZ[6];B[aa];W[bb];B[cc];W[])'; loadSGF(s); const ex=exportSGF(); const again=parseSGF(ex); A('往復で手数一致', again.moves.length===4); applyUpTo(3); const ex2=exportSGF(); const again2=parseSGF(ex2); A('途中局面の書き出し', again2.moves.length===3);
-    // 追加
+    // 正規化
     A('canvas取得', !!document.getElementById('board')); A('2Dctx', !!ctx); A('DOMContentLoaded済', document.readyState!=='loading');
     const outside=parseSGF('(;SZ[6];B[zz])'); A('盤外手は無視', outside.moves.length===0);
-    // 取りのテスト：黒a1, 白b1, 白a2, 黒b2 で白が取られるケース（6路基準座標換算）
-    reset(6); const seq=[[0,0,STONE.black],[1,0,STONE.white],[0,1,STONE.white],[1,1,STONE.black]]; for(const [x,y,c] of seq){ const r=tryPlay(board,x,y,c); A('合法手', r.ok===true); board=r.board; }
-    A('白取り発生', board[0][1]!==STONE.white && board[1][0]!==STONE.white);
-    // 自殺手の非合法
+    const prevN=N; reset(2); A('サイズ<3は3に丸め', N===3 && sizeInput.value==='3'); reset(30); A('サイズ>25は25に丸め', N===25 && sizeInput.value==='25'); reset('abc'); A('不正値(abc)は現行Nを維持', N===25); reset(""); A('空文字は3に丸め', N===3); reset(prevN);
+    // 取り
+    reset(5); koPoint=null; let r; r=tryPlay(board,1,1,STONE.white); A('白中央配置', r.ok===true); board=r.board; r=tryPlay(board,0,1,STONE.black); A('黒左', r.ok===true); board=r.board; r=tryPlay(board,2,1,STONE.black); A('黒右', r.ok===true); board=r.board; r=tryPlay(board,1,0,STONE.black); A('黒上', r.ok===true); board=r.board; r=tryPlay(board,1,2,STONE.black); A('黒下=取り', r.ok===true); board=r.board; A('白が取られている', board[1][1]===STONE.empty);
+    // 自殺
     reset(6); let r1=tryPlay(board,0,0,STONE.black); board=r1.board; let r2=tryPlay(board,1,0,STONE.white); board=r2.board; let r3=tryPlay(board,0,1,STONE.white); A('白自殺は不可', tryPlay(board,0,0,STONE.white).ok===false);
+    // 共有URL roundtrip
+    reset(6); moves=[]; cursor=0; const demo='(;SZ[6];B[aa];W[bb];B[cc])'; loadSGF(demo); applyUpTo(2); const url=buildShareUrl(); const hash=url.split('#')[1]; A('共有URLに sz/k/s が含まれる', /sz=\d+/.test(hash)&&/k=\d+/.test(hash)&&/s=/.test(hash));
+    const before=exportSGFUpTo(cursor); const params=new URLSearchParams(hash); const back=decodeURIComponent(params.get('s')); const sgfDecoded=b64ToUtf8(back); A('SGF往復一致(途中手)', before===sgfDecoded);
+    // ▼ 追加：ハッシュの k=1 を正しく復元（clampStep 使用）
+    const url2 = new URL(location.href); url2.hash = `#sz=6&k=1&s=${encodeURIComponent(utf8ToB64(before))}`; location.hash = url2.hash; const ok = applyHash(); A('applyHash は true を返す', ok===true); A('k=1 復元で cursor===1', cursor===1);
+    // OGP生成は例外なく動く（背景=白）
+    let okOGP=true; try{ ogpBtn.click(); }catch(e){ okOGP=false; } A('OGP生成で例外なし', okOGP);
+    // ▼ 追加：recentMoves の長さと形式
+    const rec = recentMoves(10); A('recentMoves は 0..10 件', rec.length>=0 && rec.length<=10);
+    // URLハッシュをテスト前の状態に戻す（リロード時に局面が残らないように）
+    try { history.replaceState(null, '', location.pathname + location.search + origHash); } catch(e) { location.hash = origHash || ''; }
+    // 復元
+    reset(initN); moves=initMoves.slice(); applyUpTo(initCursor);
   })();
+  // --- ここでUIを確実に初期状態（空局面）に戻す ---
+  try { history.replaceState(null, '', location.pathname + location.search); } catch(e) { /* noop */ }
+  setTimeout(() => { moves=[]; cursor=0; koPoint=null; reset(N); }, 0);
 });
 </script>
 </body>
